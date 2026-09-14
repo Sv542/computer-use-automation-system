@@ -1,0 +1,13 @@
+node_modules/
+dist/
+.env
+/artifacts/
+/runs/
+test-results/
+playwright-report/
+*.log
+.DS_Store
+
+# Runtime evidence may contain sensitive data. Only the synthetic, reviewed
+# fixtures under /evidence are committed.
+evidence/private/

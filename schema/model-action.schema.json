@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Computer use decision envelope",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "kind": { "enum": ["click", "type", "extract", "finish", "escalate"] },
+    "description": { "type": ["string", "null"] },
+    "target": {
+      "type": ["object", "null"],
+      "properties": {
+        "frame": {
+          "type": ["object", "null"],
+          "properties": {
+            "name": { "type": ["string", "null"] },
+            "urlPattern": { "type": ["string", "null"] }
+          },
+          "required": ["name", "urlPattern"],
+          "additionalProperties": false
+        },
+        "locator": {
+          "type": "object",
+          "properties": {
+            "strategy": { "enum": ["role", "label", "text", "css"] },
+            "role": { "type": ["string", "null"] },
+            "name": { "type": ["string", "null"] },
+            "label": { "type": ["string", "null"] },
+            "text": { "type": ["string", "null"] },
+            "selector": { "type": ["string", "null"] },
+            "exact": { "type": ["boolean", "null"] }
+          },
+          "required": ["strategy", "role", "name", "label", "text", "selector", "exact"],
+          "additionalProperties": false
+        }
+      },
+      "required": ["frame", "locator"],
+      "additionalProperties": false
+    },
+    "value": {
+      "type": ["object", "null"],
+      "properties": {
+        "kind": { "enum": ["literal", "parameter"] },
+        "value": { "type": ["string", "null"] },
+        "name": { "type": ["string", "null"] }
+      },
+      "required": ["kind", "value", "name"],
+      "additionalProperties": false
+    },
+    "output": { "type": ["string", "null"] },
+    "parseAs": { "enum": ["string", "integer", "number", "boolean", "money", null] },
+    "risk": { "enum": ["safe", "reversible", "irreversible", null] },
+    "rationale": { "type": "string" },
+    "summary": { "type": ["string", "null"] },
+    "reason": { "type": ["string", "null"] }
+  },
+  "required": [
+    "kind",
+    "description",
+    "target",
+    "value",
+    "output",
+    "parseAs",
+    "risk",
+    "rationale",
+    "summary",
+    "reason"
+  ]
+}

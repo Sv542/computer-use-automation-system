@@ -1,0 +1,296 @@
+{
+  "schemaVersion": "1.0.0",
+  "capability": {
+    "id": "meridian.lookup-savings-balance",
+    "name": "Look up savings balance",
+    "description": "Find a synthetic member in Meridian Core and return the current share-savings balance.",
+    "version": "1.0.0",
+    "approval": "draft"
+  },
+  "target": {
+    "surface": "web",
+    "appId": "meridian-core-demo",
+    "entrypoint": "http://127.0.0.1:4318/",
+    "allowedOrigins": [
+      "http://127.0.0.1:*"
+    ],
+    "allowedPathPatterns": [
+      "^/(|nav|members|member-result|maintenance)$"
+    ],
+    "redactSelectors": [
+      "[data-sensitive=true]",
+      "input"
+    ]
+  },
+  "compatibility": {
+    "vendorProduct": "Meridian Core",
+    "testedVersions": [
+      "2004-demo.1"
+    ],
+    "uiFingerprint": "frames:navigation+main|member-inquiry|share-savings"
+  },
+  "contract": {
+    "goalTemplate": "Look up member {{memberId}} and return the current share savings balance.",
+    "inputs": {
+      "memberId": {
+        "type": "string",
+        "description": "Institution-scoped synthetic member identifier.",
+        "required": true,
+        "sensitive": true,
+        "pattern": "^[0-9]{5}$"
+      }
+    },
+    "outputs": {
+      "savingsBalance": {
+        "type": "money",
+        "description": "Current share-savings balance as {currency, amountMinor}.",
+        "sensitive": true
+      }
+    },
+    "businessOutcomes": [
+      {
+        "code": "MEMBER_NOT_FOUND",
+        "description": "The identifier is valid, but no matching member exists."
+      }
+    ]
+  },
+  "policy": {
+    "allowedActions": [
+      "navigate",
+      "click",
+      "type",
+      "extract"
+    ],
+    "irreversibleAction": "human_approval",
+    "riskyTargetPatterns": [
+      "delete|transfer|submit payment|open account|close account"
+    ]
+  },
+  "steps": [
+    {
+      "id": "step-01",
+      "description": "Enter the memberId input",
+      "action": {
+        "kind": "type",
+        "target": {
+          "frame": {
+            "name": "main"
+          },
+          "primary": {
+            "strategy": "label",
+            "label": "Member ID",
+            "exact": true
+          },
+          "fallbacks": [
+            {
+              "strategy": "css",
+              "selector": "input[name=\"id\"]"
+            }
+          ],
+          "fingerprint": {
+            "tag": "input"
+          },
+          "rationale": "Prefer a semantic role/name or label; retain structural attributes only as ordered fallbacks. Replay requires a unique visible match."
+        },
+        "value": {
+          "kind": "parameter",
+          "name": "memberId"
+        },
+        "clear": true,
+        "risk": "safe"
+      },
+      "timeoutMs": 5000,
+      "retry": {
+        "maxAttempts": 2,
+        "backoffMs": 250
+      }
+    },
+    {
+      "id": "step-02",
+      "description": "Submit the member inquiry lookup.",
+      "action": {
+        "kind": "click",
+        "target": {
+          "frame": {
+            "name": "main"
+          },
+          "primary": {
+            "strategy": "role",
+            "role": "button",
+            "name": "Search",
+            "exact": true
+          },
+          "fallbacks": [
+            {
+              "strategy": "text",
+              "text": "Search",
+              "exact": true
+            }
+          ],
+          "fingerprint": {
+            "tag": "button",
+            "controlType": "submit"
+          },
+          "rationale": "Prefer a semantic role/name or label; retain structural attributes only as ordered fallbacks. Replay requires a unique visible match."
+        },
+        "risk": "safe"
+      },
+      "timeoutMs": 5000,
+      "retry": {
+        "maxAttempts": 2,
+        "backoffMs": 250
+      }
+    },
+    {
+      "id": "step-03",
+      "description": "Extract the current share savings balance.",
+      "action": {
+        "kind": "extract",
+        "target": {
+          "frame": {
+            "name": "main"
+          },
+          "primary": {
+            "strategy": "role",
+            "role": "status",
+            "name": "Savings balance",
+            "exact": true
+          },
+          "fallbacks": [],
+          "fingerprint": {
+            "tag": "span"
+          },
+          "rationale": "Prefer a semantic role/name or label; retain structural attributes only as ordered fallbacks. Replay requires a unique visible match."
+        },
+        "output": "savingsBalance",
+        "parseAs": "money",
+        "risk": "safe"
+      },
+      "timeoutMs": 5000,
+      "retry": {
+        "maxAttempts": 2,
+        "backoffMs": 250
+      }
+    }
+  ],
+  "exceptionRules": [
+    {
+      "id": "member-not-found",
+      "classification": "business_outcome",
+      "code": "MEMBER_NOT_FOUND",
+      "message": "No member exists for the supplied identifier.",
+      "when": {
+        "kind": "visible",
+        "target": {
+          "frame": {
+            "name": "main"
+          },
+          "primary": {
+            "strategy": "css",
+            "selector": ".business-error"
+          },
+          "rationale": "A vendor-owned message class identifies this documented business outcome."
+        }
+      }
+    },
+    {
+      "id": "session-expired",
+      "classification": "recoverable",
+      "code": "SESSION_EXPIRED",
+      "message": "The application session expired during the lookup.",
+      "when": {
+        "kind": "visible",
+        "target": {
+          "frame": {
+            "name": "main"
+          },
+          "primary": {
+            "strategy": "role",
+            "role": "dialog",
+            "name": "Session expired"
+          }
+        }
+      },
+      "recovery": [
+        {
+          "kind": "click",
+          "target": {
+            "frame": {
+              "name": "main"
+            },
+            "primary": {
+              "strategy": "role",
+              "role": "button",
+              "name": "Resume session"
+            }
+          },
+          "risk": "safe"
+        }
+      ],
+      "maxRecoveries": 1
+    },
+    {
+      "id": "operator-verification",
+      "classification": "human_required",
+      "code": "OPERATOR_VERIFICATION_REQUIRED",
+      "message": "An authorized operator must complete identity verification in the live session.",
+      "when": {
+        "kind": "visible",
+        "target": {
+          "frame": {
+            "name": "main"
+          },
+          "primary": {
+            "strategy": "role",
+            "role": "dialog",
+            "name": "Operator verification required"
+          }
+        }
+      }
+    },
+    {
+      "id": "permission-denied",
+      "classification": "hard_failure",
+      "code": "PERMISSION_DENIED",
+      "message": "The current operator does not have permission to read this member.",
+      "when": {
+        "kind": "visible",
+        "target": {
+          "frame": {
+            "name": "main"
+          },
+          "primary": {
+            "strategy": "css",
+            "selector": ".permission-error"
+          }
+        }
+      }
+    }
+  ],
+  "checkpoint": {
+    "kind": "visible",
+    "target": {
+      "frame": {
+        "name": "main"
+      },
+      "primary": {
+        "strategy": "role",
+        "role": "heading",
+        "name": "Member details"
+      },
+      "fallbacks": [
+        {
+          "strategy": "css",
+          "selector": "table[summary='Member details']"
+        }
+      ],
+      "rationale": "The semantic heading is primary; the stable vendor table summary is a legacy fallback."
+    }
+  },
+  "provenance": {
+    "sourceRunId": "discovery-live",
+    "discoveredAt": "2026-09-14T16:38:43.889Z",
+    "provider": "codex-cli",
+    "model": "codex-cli-configured-default"
+  }
+}

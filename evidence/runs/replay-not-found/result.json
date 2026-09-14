@@ -1,0 +1,10 @@
+{
+  "status": "business_outcome",
+  "runId": "replay-not-found",
+  "capabilityId": "meridian.lookup-savings-balance",
+  "outcome": {
+    "code": "MEMBER_NOT_FOUND",
+    "message": "No member exists for the supplied identifier."
+  },
+  "evidenceDir": "[LOCAL_RUN_DIRECTORY]"
+}

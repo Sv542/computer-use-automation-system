@@ -1,0 +1,15 @@
+{
+  "status": "failure",
+  "runId": "replay-permission-denied",
+  "capabilityId": "meridian.lookup-savings-balance",
+  "error": {
+    "code": "PERMISSION_DENIED",
+    "classification": "application",
+    "message": "The current operator does not have permission to read this member.",
+    "stepId": "step-02",
+    "observed": "Matched exception rule permission-denied",
+    "retryable": false,
+    "evidenceRef": "screenshots/007-permission_denied.png"
+  },
+  "evidenceDir": "[LOCAL_RUN_DIRECTORY]"
+}

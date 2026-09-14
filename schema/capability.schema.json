@@ -1,0 +1,344 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/schemas/ui-capability-1.0.0.json",
+  "title": "Versioned UI capability",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "capability",
+    "target",
+    "compatibility",
+    "contract",
+    "policy",
+    "steps",
+    "exceptionRules",
+    "checkpoint",
+    "provenance"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "1.0.0" },
+    "capability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "version", "description", "approval"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z][a-z0-9.-]+$" },
+        "name": { "type": "string", "minLength": 1 },
+        "version": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" },
+        "description": { "type": "string", "minLength": 1 },
+        "approval": { "enum": ["draft", "approved"] }
+      }
+    },
+    "target": { "$ref": "#/$defs/targetApplication" },
+    "compatibility": { "$ref": "#/$defs/compatibility" },
+    "contract": { "$ref": "#/$defs/contract" },
+    "policy": { "$ref": "#/$defs/policy" },
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/step" }
+    },
+    "exceptionRules": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/exceptionRule" }
+    },
+    "checkpoint": { "$ref": "#/$defs/condition" },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sourceRunId", "discoveredAt", "provider", "model"],
+      "properties": {
+        "sourceRunId": { "type": "string", "minLength": 1 },
+        "discoveredAt": { "type": "string", "format": "date-time" },
+        "provider": { "type": "string", "minLength": 1 },
+        "model": { "type": "string", "minLength": 1 }
+      }
+    }
+  },
+  "$defs": {
+    "parameterType": { "enum": ["string", "integer", "number", "boolean", "money"] },
+    "risk": { "enum": ["safe", "reversible", "irreversible"] },
+    "parameterDefinition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "description", "required"],
+      "properties": {
+        "type": { "$ref": "#/$defs/parameterType" },
+        "description": { "type": "string", "minLength": 1 },
+        "required": { "type": "boolean" },
+        "sensitive": { "type": "boolean" },
+        "pattern": { "type": "string" }
+      }
+    },
+    "outputDefinition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "description"],
+      "properties": {
+        "type": { "$ref": "#/$defs/parameterType" },
+        "description": { "type": "string", "minLength": 1 },
+        "sensitive": { "type": "boolean" }
+      }
+    },
+    "contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["goalTemplate", "inputs", "outputs", "businessOutcomes"],
+      "properties": {
+        "goalTemplate": { "type": "string", "minLength": 1 },
+        "inputs": { "type": "object", "additionalProperties": { "$ref": "#/$defs/parameterDefinition" } },
+        "outputs": { "type": "object", "additionalProperties": { "$ref": "#/$defs/outputDefinition" } },
+        "businessOutcomes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["code", "description"],
+            "properties": {
+              "code": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]+$" },
+              "description": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
+      }
+    },
+    "targetApplication": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["surface", "appId", "entrypoint", "allowedOrigins", "allowedPathPatterns", "redactSelectors"],
+      "properties": {
+        "surface": { "const": "web" },
+        "appId": { "type": "string", "minLength": 1 },
+        "entrypoint": { "type": "string", "format": "uri" },
+        "allowedOrigins": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+        "allowedPathPatterns": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+        "redactSelectors": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["allowedActions", "irreversibleAction", "riskyTargetPatterns"],
+      "properties": {
+        "allowedActions": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "enum": ["navigate", "click", "type", "extract"] }
+        },
+        "irreversibleAction": { "enum": ["block", "human_approval"] },
+        "riskyTargetPatterns": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "compatibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["vendorProduct", "testedVersions", "uiFingerprint"],
+      "properties": {
+        "vendorProduct": { "type": "string", "minLength": 1 },
+        "testedVersions": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+        "uiFingerprint": { "type": "string", "minLength": 1 },
+        "tenantOverrides": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "entrypoint": { "type": "string", "format": "uri" },
+              "locatorOverrides": {
+                "type": "object",
+                "additionalProperties": { "$ref": "#/$defs/target" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "frame": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "name": { "type": "string" },
+        "urlPattern": { "type": "string" }
+      }
+    },
+    "locator": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["strategy", "role", "name"],
+          "properties": {
+            "strategy": { "const": "role" },
+            "role": { "type": "string" },
+            "name": { "type": "string" },
+            "exact": { "type": "boolean" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["strategy", "label"],
+          "properties": {
+            "strategy": { "const": "label" },
+            "label": { "type": "string" },
+            "exact": { "type": "boolean" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["strategy", "text"],
+          "properties": {
+            "strategy": { "const": "text" },
+            "text": { "type": "string" },
+            "exact": { "type": "boolean" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["strategy", "selector"],
+          "properties": {
+            "strategy": { "const": "css" },
+            "selector": { "type": "string" }
+          }
+        }
+      ]
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["primary"],
+      "properties": {
+        "frame": { "$ref": "#/$defs/frame" },
+        "primary": { "$ref": "#/$defs/locator" },
+        "fallbacks": { "type": "array", "items": { "$ref": "#/$defs/locator" } },
+        "fingerprint": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "tag": { "type": "string" },
+            "controlType": { "type": "string" },
+            "nearbyText": { "type": "string" }
+          }
+        },
+        "rationale": { "type": "string" }
+      }
+    },
+    "value": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "value"],
+          "properties": { "kind": { "const": "literal" }, "value": { "type": "string" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "name"],
+          "properties": { "kind": { "const": "parameter" }, "name": { "type": "string" } }
+        }
+      ]
+    },
+    "action": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "path", "risk"],
+          "properties": { "kind": { "const": "navigate" }, "path": { "type": "string" }, "risk": { "$ref": "#/$defs/risk" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "target", "risk"],
+          "properties": { "kind": { "const": "click" }, "target": { "$ref": "#/$defs/target" }, "risk": { "$ref": "#/$defs/risk" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "target", "value", "clear", "risk"],
+          "properties": {
+            "kind": { "const": "type" },
+            "target": { "$ref": "#/$defs/target" },
+            "value": { "$ref": "#/$defs/value" },
+            "clear": { "type": "boolean" },
+            "risk": { "$ref": "#/$defs/risk" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "target", "output", "parseAs", "risk"],
+          "properties": {
+            "kind": { "const": "extract" },
+            "target": { "$ref": "#/$defs/target" },
+            "output": { "type": "string" },
+            "parseAs": { "$ref": "#/$defs/parameterType" },
+            "risk": { "$ref": "#/$defs/risk" }
+          }
+        }
+      ]
+    },
+    "condition": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "target"],
+          "properties": { "kind": { "enum": ["visible", "not_visible"] }, "target": { "$ref": "#/$defs/target" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "target", "pattern"],
+          "properties": { "kind": { "const": "text_matches" }, "target": { "$ref": "#/$defs/target" }, "pattern": { "type": "string" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "pattern"],
+          "properties": { "kind": { "const": "url_matches" }, "pattern": { "type": "string" } }
+        }
+      ]
+    },
+    "step": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "description", "action", "timeoutMs", "retry"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]+$" },
+        "description": { "type": "string", "minLength": 1 },
+        "action": { "$ref": "#/$defs/action" },
+        "timeoutMs": { "type": "integer", "minimum": 100, "maximum": 120000 },
+        "retry": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["maxAttempts", "backoffMs"],
+          "properties": {
+            "maxAttempts": { "type": "integer", "minimum": 1, "maximum": 5 },
+            "backoffMs": { "type": "integer", "minimum": 0, "maximum": 30000 }
+          }
+        },
+        "postcondition": { "$ref": "#/$defs/condition" }
+      }
+    },
+    "exceptionRule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "classification", "code", "message", "when"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "classification": { "enum": ["business_outcome", "recoverable", "human_required", "hard_failure"] },
+        "code": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]+$" },
+        "message": { "type": "string", "minLength": 1 },
+        "when": { "$ref": "#/$defs/condition" },
+        "recovery": { "type": "array", "items": { "$ref": "#/$defs/action" } },
+        "maxRecoveries": { "type": "integer", "minimum": 0, "maximum": 5 }
+      }
+    }
+  }
+}

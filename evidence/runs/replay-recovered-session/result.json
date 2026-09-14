@@ -1,0 +1,7 @@
+{
+  "status": "success",
+  "runId": "replay-recovered-session",
+  "capabilityId": "meridian.lookup-savings-balance",
+  "outputs": "[REDACTED:outputs]",
+  "evidenceDir": "[LOCAL_RUN_DIRECTORY]"
+}
