@@ -226,6 +226,8 @@ export interface InterventionRequest {
   reason: string;
   capabilityId: string;
   stepId?: string;
+  kind: "manual" | "approval";
+  approval?: { actionKind: ActionKind; actionDigest: string };
   lease: { controller: "operator"; epoch: number };
   screenshot?: string;
   createdAt: string;

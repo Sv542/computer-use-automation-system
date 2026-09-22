@@ -6,7 +6,7 @@ import type {
   JsonValue,
   ModelAction,
 } from "../domain/types.js";
-import { assertInputs } from "../domain/validation.js";
+import { assertInputs, assertOutputs } from "../domain/validation.js";
 import { EvidenceRecorder } from "../infra/evidence.js";
 import { HandoffCoordinator } from "../handoff/coordinator.js";
 import { PolicyGuard, PolicyViolation } from "../policy/guard.js";
@@ -61,6 +61,7 @@ export class DiscoveryAgent {
     assertInputs(options.spec.contract.inputs, options.inputs);
     const policy = new PolicyGuard(options.spec.target, options.spec.policy);
     policy.assertUrl(options.spec.target.entrypoint);
+    await options.surface.enforcePolicy(policy);
 
     const goal = renderGoal(options.spec.contract.goalTemplate, options.inputs);
     const recordedSteps: CapabilityStep[] = [];
@@ -106,13 +107,14 @@ export class DiscoveryAgent {
       });
 
       if (decision.kind === "escalate") {
-        await this.handoff.request({
+        const disposition = await this.handoff.request({
           reason: decision.reason,
           capabilityId: options.spec.capability.id,
           stepId: `discovery-${stepNumber}`,
           surface: options.surface,
           evidence: options.evidence,
         });
+        if (disposition === "rejected") throw new Error("The operator declined the discovery intervention.");
         completedActions.push(decisionSummary(decision));
         continue;
       }
@@ -120,6 +122,7 @@ export class DiscoveryAgent {
       if (decision.kind === "finish") {
         const missingOutputs = Object.keys(options.spec.contract.outputs).filter((name) => !(name in outputs));
         if (missingOutputs.length > 0) throw new Error(`Model finished before extracting: ${missingOutputs.join(", ")}`);
+        assertOutputs(options.spec.contract.outputs, outputs);
         if (!(await options.surface.conditionMet(options.spec.checkpoint))) {
           throw new Error("Model declared success, but the capability checkpoint was not satisfied.");
         }
@@ -162,14 +165,18 @@ export class DiscoveryAgent {
         policy.authorize(action, policyUrl);
       } catch (error) {
         if (!(error instanceof PolicyViolation) || error.code !== "HUMAN_APPROVAL_REQUIRED") throw error;
-        await this.handoff.request({
-          reason: error.message,
+        const disposition = await this.handoff.request({
+          reason: `Approve ${decision.description}: ${error.message}`,
           capabilityId: options.spec.capability.id,
           stepId: `discovery-${stepNumber}`,
+          approvalAction: action,
           surface: options.surface,
           evidence: options.evidence,
         });
-        policy.authorize(action, policyUrl, true);
+        if (disposition !== "approved") {
+          throw new PolicyViolation("HUMAN_APPROVAL_REJECTED", "The operator did not approve this exact action.");
+        }
+        policy.authorize(action, await options.surface.policyUrlFor(action), true);
       }
       const value = await options.surface.execute(action, options.inputs);
       const step: CapabilityStep = {

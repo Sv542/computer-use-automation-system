@@ -7,7 +7,7 @@ import type {
   RunFailure,
   RunResult,
 } from "../domain/types.js";
-import { assertCapability, assertInputs } from "../domain/validation.js";
+import { assertCapability, assertInputs, assertOutputs } from "../domain/validation.js";
 import { EvidenceRecorder } from "../infra/evidence.js";
 import { HandoffCoordinator } from "../handoff/coordinator.js";
 import { PolicyGuard, PolicyViolation } from "../policy/guard.js";
@@ -101,13 +101,22 @@ export class DeterministicReplayer {
     }
 
     if (rule.classification === "human_required") {
-      await this.handoff.request({
+      const disposition = await this.handoff.request({
         reason: rule.message,
         capabilityId: options.artifact.capability.id,
         stepId: options.step.id,
         surface: options.surface,
         evidence: options.evidence,
       });
+      if (disposition === "rejected") {
+        return this.failure(options.artifact, options.evidence, {
+          code: "HANDOFF_REJECTED",
+          classification: "application",
+          message: "The operator declined to complete the manual intervention.",
+          stepId: options.step.id,
+          retryable: false,
+        });
+      }
       if (await options.surface.conditionMet(rule.when)) {
         const evidenceRef = await this.captureFailure(options.surface, options.evidence, "handoff-unresolved");
         return this.failure(options.artifact, options.evidence, {
@@ -160,6 +169,7 @@ export class DeterministicReplayer {
 
     try {
       policy.assertUrl(artifact.target.entrypoint);
+      await options.surface.enforcePolicy(policy);
       await options.evidence.event("run_started", {
         mode: "deterministic_replay",
         capabilityId: artifact.capability.id,
@@ -177,25 +187,33 @@ export class DeterministicReplayer {
         });
         let completed = false;
         let lastError: unknown;
-        const allowedAttempts = step.retry.maxAttempts + (options.handoffOnUnexpectedFailure ? 1 : 0);
+        const allowedAttempts = step.retry.maxAttempts + (options.handoffOnUnexpectedFailure && step.action.kind === "extract" ? 1 : 0);
 
         for (let attempt = 1; attempt <= allowedAttempts && !completed; attempt += 1) {
+          let executionStarted = false;
+          let executionReturned = false;
           try {
             const policyUrl = await options.surface.policyUrlFor(step.action);
             try {
               policy.authorize(step.action, policyUrl);
             } catch (error) {
               if (!(error instanceof PolicyViolation) || error.code !== "HUMAN_APPROVAL_REQUIRED") throw error;
-              await this.handoff.request({
-                reason: error.message,
+              const disposition = await this.handoff.request({
+                reason: `Approve ${step.description}: ${error.message}`,
                 capabilityId: artifact.capability.id,
                 stepId: step.id,
+                approvalAction: step.action,
                 surface: options.surface,
                 evidence: options.evidence,
               });
-              policy.authorize(step.action, policyUrl, true);
+              if (disposition !== "approved") {
+                throw new PolicyViolation("HUMAN_APPROVAL_REJECTED", "The operator did not approve this exact action.");
+              }
+              policy.authorize(step.action, await options.surface.policyUrlFor(step.action), true);
             }
+            executionStarted = true;
             const value = await options.surface.execute(step.action, options.inputs, step.timeoutMs);
+            executionReturned = true;
             if (step.action.kind === "extract") outputs[step.action.output] = value ?? null;
             if (step.postcondition && !(await options.surface.conditionMet(step.postcondition))) {
               throw new Error(`Postcondition failed for ${step.id}.`);
@@ -203,22 +221,28 @@ export class DeterministicReplayer {
             completed = true;
             await options.evidence.event("step_completed", { stepId: step.id, attempt, output: step.action.kind === "extract" ? step.action.output : undefined });
           } catch (error) {
-            lastError = error;
+            lastError = options.surface.takeBlockedRequest() ?? error;
             await options.evidence.event("step_attempt_failed", {
               stepId: step.id,
               attempt,
-              message: error instanceof Error ? error.message : String(error),
-              locatorAttempts: error instanceof TargetResolutionError ? error.attempts : undefined,
+              message: lastError instanceof Error ? lastError.message : String(lastError),
+              locatorAttempts: lastError instanceof TargetResolutionError ? lastError.attempts : undefined,
             });
+            // Once a click, type, or navigation may have run, retrying could
+            // repeat a side effect. A target-resolution failure is pre-action.
+            const safeToRetry = step.action.kind === "extract" ||
+              (!executionReturned && (!executionStarted || lastError instanceof TargetResolutionError));
+            if (lastError instanceof PolicyViolation || !safeToRetry) break;
             if (attempt < step.retry.maxAttempts) await pause(step.retry.backoffMs * attempt);
             else if (attempt === step.retry.maxAttempts && options.handoffOnUnexpectedFailure) {
-              await this.handoff.request({
+              const disposition = await this.handoff.request({
                 reason: `Replay could not complete ${step.id}: ${error instanceof Error ? error.message : String(error)}`,
                 capabilityId: artifact.capability.id,
                 stepId: step.id,
                 surface: options.surface,
                 evidence: options.evidence,
               });
+              if (disposition === "rejected") break;
             }
           }
         }
@@ -227,8 +251,8 @@ export class DeterministicReplayer {
           const evidenceRef = await this.captureFailure(options.surface, options.evidence, "step-failed");
           const observed = lastError instanceof TargetResolutionError ? lastError.attempts.join("; ") : undefined;
           const error = this.failure(artifact, options.evidence, {
-            code: lastError instanceof TargetResolutionError ? "TARGET_NOT_FOUND" : "STEP_FAILED",
-            classification: lastError instanceof TargetResolutionError ? "target" : "application",
+            code: lastError instanceof PolicyViolation ? lastError.code : lastError instanceof TargetResolutionError ? "TARGET_NOT_FOUND" : "STEP_FAILED",
+            classification: lastError instanceof PolicyViolation ? "policy" : lastError instanceof TargetResolutionError ? "target" : "application",
             message: lastError instanceof Error ? lastError.message : "Step failed without an error message.",
             stepId: step.id,
             expected: step.description,
@@ -275,6 +299,18 @@ export class DeterministicReplayer {
           code: "OUTPUT_MISSING",
           classification: "checkpoint",
           message: `Replay did not produce declared outputs: ${missing.join(", ")}`,
+          retryable: false,
+        });
+        await options.evidence.event("run_completed", result);
+        return result;
+      }
+      try {
+        assertOutputs(artifact.contract.outputs, outputs);
+      } catch (error) {
+        const result = this.failure(artifact, options.evidence, {
+          code: "OUTPUT_INVALID",
+          classification: "checkpoint",
+          message: error instanceof Error ? error.message : String(error),
           retryable: false,
         });
         await options.evidence.event("run_completed", result);

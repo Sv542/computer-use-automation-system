@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import addFormatsModule from "ajv-formats";
-import type { CapabilityArtifact, JsonValue, ParameterDefinition } from "./types.js";
+import type { CapabilityArtifact, JsonValue, OutputDefinition, ParameterDefinition } from "./types.js";
 
 const schema = JSON.parse(
   await readFile(new URL("../../schema/capability.schema.json", import.meta.url), "utf8"),
@@ -28,8 +28,24 @@ function valueMatches(value: JsonValue, definition: ParameterDefinition): boolea
     case "boolean":
       return typeof value === "boolean";
     case "money":
-      return typeof value === "object" && value !== null && !Array.isArray(value);
+      return typeof value === "object" && value !== null && !Array.isArray(value) &&
+        typeof value.currency === "string" && /^[A-Z]{3}$/.test(value.currency) &&
+        typeof value.amountMinor === "number" && Number.isSafeInteger(value.amountMinor);
   }
+}
+
+export function assertOutputs(
+  definitions: Record<string, OutputDefinition>,
+  outputs: Record<string, JsonValue>,
+): void {
+  for (const [name, definition] of Object.entries(definitions)) {
+    if (!(name in outputs)) throw new Error(`Declared output is missing: ${name}`);
+    if (!valueMatches(outputs[name]!, { ...definition, required: true })) {
+      throw new Error(`Output ${name} does not satisfy type ${definition.type}.`);
+    }
+  }
+  const unknown = Object.keys(outputs).filter((name) => !(name in definitions));
+  if (unknown.length > 0) throw new Error(`Undeclared outputs: ${unknown.join(", ")}`);
 }
 
 export function assertInputs(

@@ -33,7 +33,7 @@ flowchart LR
 - Distinct `success`, `business_outcome`, and `failure` results.
 - Explicit runtime handling for not-found, a bounded session-expiry recovery, permission denial, and operator verification.
 - A real same-session human handoff: automation pauses, an epoch-based control lease moves to the operator, their DOM actions are captured, and the lease returns to automation.
-- Origin, route, and action allowlists. Risky actions require a human approval handoff. Policy is checked against the actual target frame URL, not only the top page.
+- Origin, route, and action allowlists. Browser requests are intercepted before navigation or submission can leave the boundary. Risky actions require an explicit approve/reject decision tied to the proposed action; pressing Enter only resumes ordinary manual handoffs.
 - JSONL events, masked screenshots, and subtree redaction. Raw model transcripts and chain-of-thought are not stored.
 - Tenant specialization through optional entrypoint and per-step locator overrides on a shared vendor artifact.
 
@@ -129,7 +129,7 @@ npm run replay -- \
 
 Automation pauses on the verification dialog. Complete it in that same Chrome window and press Enter in the terminal. `intervention.json` and the event log preserve the control transfer and sanitized operator actions.
 
-Use `--headed --handoff-on-failure` to route an otherwise unknown step failure through the same mechanism before the bounded retry.
+Use `--headed --handoff-on-failure` to route an otherwise unknown read-only extraction failure through the same mechanism before one final attempt. A click, type, or navigation whose effect is uncertain is never blindly repeated.
 
 ## Evidence
 

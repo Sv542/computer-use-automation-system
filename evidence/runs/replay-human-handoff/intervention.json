@@ -1,13 +1,14 @@
 {
-  "id": "8fabec51-9ed0-46ef-8191-c843849c3ffe",
+  "id": "54981fc9-8ad3-49ba-93cb-dec7d7199ccd",
   "runId": "replay-human-handoff",
   "reason": "An authorized operator must complete identity verification in the live session.",
   "capabilityId": "meridian.lookup-savings-balance",
   "stepId": "step-02",
+  "kind": "manual",
   "lease": {
     "controller": "operator",
     "epoch": 1
   },
   "screenshot": "screenshots/007-intervention.png",
-  "createdAt": "2026-09-14T21:19:03.186Z"
+  "createdAt": "2026-09-22T15:56:17.625Z"
 }

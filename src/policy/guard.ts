@@ -26,7 +26,7 @@ export class PolicyGuard {
     private readonly policy: PolicyDefinition,
   ) {}
 
-  assertUrl(rawUrl: string): void {
+  assertOrigin(rawUrl: string): URL {
     let url: URL;
     try {
       url = new URL(rawUrl);
@@ -37,6 +37,11 @@ export class PolicyGuard {
     if (!this.target.allowedOrigins.some((origin) => wildcardMatches(origin, url.origin))) {
       throw new PolicyViolation("ORIGIN_NOT_ALLOWED", `Origin ${url.origin} is not allowlisted.`);
     }
+    return url;
+  }
+
+  assertUrl(rawUrl: string): void {
+    const url = this.assertOrigin(rawUrl);
     if (!this.target.allowedPathPatterns.some((pattern) => new RegExp(pattern).test(url.pathname))) {
       throw new PolicyViolation("ROUTE_NOT_ALLOWED", `Route ${url.pathname} is not allowlisted.`);
     }

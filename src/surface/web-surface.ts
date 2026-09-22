@@ -11,6 +11,7 @@ import type {
   TargetDefinition,
 } from "../domain/types.js";
 import { redactObservationText } from "../infra/redaction.js";
+import { PolicyGuard, PolicyViolation } from "../policy/guard.js";
 
 export class TargetResolutionError extends Error {
   readonly attempts: string[];
@@ -30,10 +31,35 @@ interface ResolvedTarget {
 }
 
 interface OperatorAction {
-  kind: "click" | "input" | "change";
+  kind: "click" | "input" | "change" | "navigate";
   element: string;
   at: string;
   value: "[REDACTED]" | null;
+}
+
+function installOperatorListeners(): void {
+  const state = window as typeof window & {
+    __operatorRecorderInstalled?: boolean;
+    __recordOperatorAction?: (action: OperatorAction) => Promise<void>;
+  };
+  if (state.__operatorRecorderInstalled) return;
+  state.__operatorRecorderInstalled = true;
+  for (const kind of ["click", "input", "change"] as const) {
+    document.addEventListener(kind, (event) => {
+      const html = event.target as HTMLElement | null;
+      const element = html
+        ? [html.tagName.toLowerCase(), html.getAttribute("role"), html.getAttribute("aria-label"), html.innerText?.trim().slice(0, 60)]
+          .filter(Boolean)
+          .join(":")
+        : "unknown";
+      void state.__recordOperatorAction?.({
+        kind,
+        element,
+        at: new Date().toISOString(),
+        value: kind === "input" ? "[REDACTED]" : null,
+      });
+    }, true);
+  }
 }
 
 function locatorDescription(locator: LocatorDefinition): string {
@@ -56,26 +82,37 @@ function asLocator(frame: Frame, definition: LocatorDefinition): Locator {
   }
 }
 
-function parseExtracted(raw: string, type: ParameterType): JsonValue {
+export function parseExtracted(raw: string, type: ParameterType): JsonValue {
   const trimmed = raw.trim();
   switch (type) {
     case "money": {
-      const amount = Number(trimmed.replace(/[^0-9.-]/g, ""));
-      if (!Number.isFinite(amount)) throw new Error(`Could not parse money value: ${trimmed}`);
-      return { currency: trimmed.includes("$") ? "USD" : "UNKNOWN", amountMinor: Math.round(amount * 100) };
+      const match = /^(?:([A-Z]{3})\s*)?(\$)?(-?)(\d{1,3}(?:,\d{3})*|\d+)(?:\.(\d{1,2}))?$/i.exec(trimmed);
+      const currency = match?.[1]?.toUpperCase() ?? (match?.[2] ? "USD" : undefined);
+      if (!match || !currency) throw new Error("Could not parse a currency and amount from the extracted value.");
+      const whole = Number(match[4]!.replaceAll(",", ""));
+      const cents = Number((match[5] ?? "").padEnd(2, "0"));
+      const amountMinor = (whole * 100 + cents) * (match[3] ? -1 : 1);
+      if (!Number.isSafeInteger(amountMinor)) throw new Error("Extracted money value is outside the safe integer range.");
+      return { currency, amountMinor };
     }
     case "integer": {
-      const value = Number.parseInt(trimmed, 10);
-      if (!Number.isFinite(value)) throw new Error(`Could not parse integer value: ${trimmed}`);
+      if (!/^[+-]?\d+$/.test(trimmed)) throw new Error("Could not parse integer output.");
+      const value = Number(trimmed);
+      if (!Number.isSafeInteger(value)) throw new Error("Extracted integer is outside the safe integer range.");
       return value;
     }
     case "number": {
+      if (!trimmed || !/^[+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?$/i.test(trimmed)) {
+        throw new Error("Could not parse numeric output.");
+      }
       const value = Number(trimmed);
-      if (!Number.isFinite(value)) throw new Error(`Could not parse numeric value: ${trimmed}`);
+      if (!Number.isFinite(value)) throw new Error("Extracted number is not finite.");
       return value;
     }
     case "boolean":
-      return /^(true|yes|1)$/i.test(trimmed);
+      if (/^(true|yes|1)$/i.test(trimmed)) return true;
+      if (/^(false|no|0)$/i.test(trimmed)) return false;
+      throw new Error("Could not parse boolean output.");
     case "string":
       return trimmed;
   }
@@ -86,6 +123,10 @@ export class WebSurface {
   readonly context: BrowserContext;
   readonly page: Page;
   readonly target: TargetApplication;
+  #blockedRequest: PolicyViolation | undefined;
+  #operatorActions: OperatorAction[] = [];
+  #operatorRecordingActive = false;
+  #operatorRecorderInstalled = false;
 
   private constructor(browser: Browser, context: BrowserContext, page: Page, target: TargetApplication) {
     this.browser = browser;
@@ -115,6 +156,32 @@ export class WebSurface {
     return this.page.url() || this.target.entrypoint;
   }
 
+  async enforcePolicy(policy: PolicyGuard): Promise<void> {
+    await this.context.route("**/*", async (route) => {
+      const request = route.request();
+      try {
+        // UI navigations and application requests must stay on allowed routes.
+        // Static assets may use other paths, but never another origin.
+        if (request.isNavigationRequest() || request.method() !== "GET" || ["fetch", "xhr"].includes(request.resourceType())) {
+          policy.assertUrl(request.url());
+        } else {
+          policy.assertOrigin(request.url());
+        }
+        await route.continue();
+      } catch (error) {
+        if (!(error instanceof PolicyViolation)) throw error;
+        this.#blockedRequest ??= error;
+        await route.abort("blockedbyclient");
+      }
+    });
+  }
+
+  takeBlockedRequest(): PolicyViolation | undefined {
+    const blocked = this.#blockedRequest;
+    this.#blockedRequest = undefined;
+    return blocked;
+  }
+
   async policyUrlFor(action: BrowserAction): Promise<string> {
     if (action.kind === "navigate") return this.currentUrl();
     if (action.target.frame) return this.findFrame(action.target.frame).url();
@@ -122,8 +189,13 @@ export class WebSurface {
   }
 
   async gotoEntrypoint(): Promise<void> {
-    await this.page.goto(this.target.entrypoint, { waitUntil: "domcontentloaded" });
-    await this.page.waitForLoadState("networkidle");
+    try {
+      await this.page.goto(this.target.entrypoint, { waitUntil: "domcontentloaded" });
+      await this.page.waitForLoadState("networkidle");
+    } finally {
+      const blocked = this.takeBlockedRequest();
+      if (blocked) throw blocked;
+    }
   }
 
   private findFrame(target?: TargetDefinition["frame"]): Frame {
@@ -213,6 +285,15 @@ export class WebSurface {
   }
 
   async execute(action: BrowserAction, inputs: Record<string, JsonValue>, timeoutMs = 5_000): Promise<JsonValue | undefined> {
+    try {
+      return await this.executeUnchecked(action, inputs, timeoutMs);
+    } finally {
+      const blocked = this.takeBlockedRequest();
+      if (blocked) throw blocked;
+    }
+  }
+
+  private async executeUnchecked(action: BrowserAction, inputs: Record<string, JsonValue>, timeoutMs: number): Promise<JsonValue | undefined> {
     if (action.kind === "navigate") {
       await this.page.goto(new URL(action.path, this.currentUrl()).toString(), {
         waitUntil: "domcontentloaded",
@@ -242,16 +323,29 @@ export class WebSurface {
 
   async conditionMet(condition: Condition): Promise<boolean> {
     if (condition.kind === "url_matches") return new RegExp(condition.pattern).test(this.currentUrl());
+    if (condition.kind === "not_visible") {
+      const frames = condition.target.frame ? [this.findFrame(condition.target.frame)] : this.page.frames();
+      for (const definition of [condition.target.primary, ...(condition.target.fallbacks ?? [])]) {
+        const matches: Locator[] = [];
+        for (const frame of frames) {
+          const candidate = asLocator(frame, definition);
+          const count = await candidate.count();
+          for (let index = 0; index < count; index += 1) matches.push(candidate.nth(index));
+        }
+        if (matches.length > 1) throw new TargetResolutionError("Ambiguous not_visible condition.", [locatorDescription(definition)]);
+        if (matches.length === 1) return !(await matches[0]!.isVisible());
+      }
+      return true;
+    }
     try {
       const { locator } = await this.resolve(condition.target, 750);
       if (condition.kind === "visible") return locator.isVisible();
-      if (condition.kind === "not_visible") return !(await locator.isVisible());
       if (condition.kind === "text_matches") {
         return new RegExp(condition.pattern, "i").test(await locator.innerText({ timeout: 750 }));
       }
       return false;
     } catch {
-      return condition.kind === "not_visible";
+      return false;
     }
   }
 
@@ -328,38 +422,33 @@ export class WebSurface {
   }
 
   async installOperatorRecorder(): Promise<void> {
-    for (const frame of this.page.frames()) {
-      await frame.evaluate(() => {
-        const state = window as typeof window & { __operatorActions?: OperatorAction[] };
-        state.__operatorActions = [];
-        for (const kind of ["click", "input", "change"] as const) {
-          document.addEventListener(kind, (event) => {
-            const html = event.target as HTMLElement | null;
-            const element = html
-              ? [html.tagName.toLowerCase(), html.getAttribute("role"), html.getAttribute("aria-label"), html.innerText?.trim().slice(0, 60)]
-                .filter(Boolean)
-                .join(":")
-              : "unknown";
-            state.__operatorActions?.push({
-              kind,
-              element,
-              at: new Date().toISOString(),
-              value: kind === "input" ? "[REDACTED]" : null,
-            });
-          }, true);
-        }
+    this.#operatorActions = [];
+    this.#operatorRecordingActive = true;
+    if (!this.#operatorRecorderInstalled) {
+      await this.context.exposeBinding("__recordOperatorAction", (_source, action: OperatorAction) => {
+        if (this.#operatorRecordingActive) this.#operatorActions.push(action);
       });
+      await this.context.addInitScript(installOperatorListeners);
+      this.page.on("framenavigated", (frame) => {
+        if (!this.#operatorRecordingActive) return;
+        let path = "unknown";
+        try { path = new URL(frame.url()).pathname; } catch { /* Ignore non-HTTP frame URLs. */ }
+        this.#operatorActions.push({ kind: "navigate", element: `${frame.name() || "top"}:${path}`, at: new Date().toISOString(), value: null });
+      });
+      this.#operatorRecorderInstalled = true;
+    }
+    for (const frame of this.page.frames()) {
+      await frame.evaluate(installOperatorListeners);
     }
   }
 
   async collectOperatorActions(): Promise<OperatorAction[]> {
-    const actions: OperatorAction[] = [];
-    for (const frame of this.page.frames()) {
-      actions.push(...(await frame.evaluate(() => {
-        const state = window as typeof window & { __operatorActions?: OperatorAction[] };
-        return state.__operatorActions ?? [];
-      })));
-    }
-    return actions;
+    await this.page.waitForTimeout(25);
+    this.#operatorRecordingActive = false;
+    return [...this.#operatorActions];
+  }
+
+  stopOperatorRecorder(): void {
+    this.#operatorRecordingActive = false;
   }
 }
