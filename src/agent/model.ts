@@ -158,6 +158,67 @@ Extracted outputs: ${JSON.stringify(context.extractedOutputs)}
 Current observation: ${JSON.stringify(context.observation)}`;
 }
 
+type FetchImplementation = typeof fetch;
+
+function retryAfterMilliseconds(response: Response): number {
+  const value = response.headers.get("retry-after");
+  if (!value) return 1_000;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds)) return Math.min(60_000, Math.max(0, seconds * 1_000));
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? Math.min(60_000, Math.max(0, timestamp - Date.now())) : 1_000;
+}
+
+export class GroqChatCompletionsProvider implements ModelProvider {
+  readonly id = "groq-chat-completions";
+
+  constructor(
+    readonly model = process.env.GROQ_MODEL ?? "openai/gpt-oss-20b",
+    private readonly apiKey = process.env.GROQ_API_KEY,
+    private readonly request: FetchImplementation = fetch,
+  ) {
+    if (!apiKey) throw new Error("GROQ_API_KEY is required for the Groq provider.");
+  }
+
+  async decide(context: DecisionContext): Promise<ModelAction> {
+    const requestOptions: RequestInit = {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${this.apiKey}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model: this.model,
+        messages: [{ role: "user", content: buildPrompt(context) }],
+        temperature: 0,
+        max_completion_tokens: 512,
+        response_format: {
+          type: "json_schema",
+          json_schema: {
+            name: "computer_use_action",
+            strict: true,
+            schema: modelSchema,
+          },
+        },
+      }),
+    };
+    let response = await this.request("https://api.groq.com/openai/v1/chat/completions", requestOptions);
+    if (response.status === 429) {
+      const retryDelay = retryAfterMilliseconds(response);
+      await response.text();
+      await new Promise((resolve) => setTimeout(resolve, retryDelay));
+      response = await this.request("https://api.groq.com/openai/v1/chat/completions", requestOptions);
+    }
+    if (!response.ok) throw new Error(`Groq Chat Completions failed (${response.status}): ${await response.text()}`);
+    const body = (await response.json()) as {
+      choices?: Array<{ message?: { content?: string | null } }>;
+    };
+    const content = body.choices?.[0]?.message?.content;
+    if (!content) throw new Error("Groq response contained no structured output.");
+    return assertDecision(JSON.parse(content));
+  }
+}
+
 export class OpenAIResponsesProvider implements ModelProvider {
   readonly id = "openai-responses";
 

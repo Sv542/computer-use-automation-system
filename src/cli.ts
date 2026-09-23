@@ -6,6 +6,7 @@ import { assertCapability } from "./domain/validation.js";
 import { DiscoveryAgent } from "./agent/discovery.js";
 import {
   CodexCliProvider,
+  GroqChatCompletionsProvider,
   lookupBalanceScript,
   OpenAIResponsesProvider,
   ScriptedProvider,
@@ -55,6 +56,8 @@ async function maybeDemo(options: Map<string, string | true>): Promise<DemoServe
 
 function provider(name: string): ModelProvider {
   switch (name) {
+    case "groq":
+      return new GroqChatCompletionsProvider();
     case "openai":
       return new OpenAIResponsesProvider();
     case "codex":
@@ -62,7 +65,7 @@ function provider(name: string): ModelProvider {
     case "scripted":
       return new ScriptedProvider(lookupBalanceScript());
     default:
-      throw new Error(`Unknown provider ${name}; expected openai, codex, or scripted.`);
+      throw new Error(`Unknown provider ${name}; expected groq, openai, codex, or scripted.`);
   }
 }
 
@@ -135,10 +138,10 @@ async function demo(options: Map<string, string | true>): Promise<void> {
 function usage(): string {
   return `Usage:
   npm run demo
-  npm run discover -- --with-demo --provider openai --inputs '{"memberId":"12345"}'
+  npm run discover -- --with-demo --provider groq --inputs '{"memberId":"12345"}'
   npm run replay -- --with-demo --artifact artifacts/lookup-member-balance.v1.json --inputs '{"memberId":"12345"}'
 
-Providers: openai (genuine API), codex (genuine Codex CLI), scripted (offline fixture).`;
+Providers: groq (genuine API), openai (genuine API), codex (genuine Codex CLI), scripted (offline fixture).`;
 }
 
 const [command, ...rest] = process.argv.slice(2);

@@ -5,6 +5,7 @@ import { assertCapability } from "../src/domain/validation.js";
 import { DiscoveryAgent } from "../src/agent/discovery.js";
 import {
   CodexCliProvider,
+  GroqChatCompletionsProvider,
   lookupBalanceScript,
   OpenAIResponsesProvider,
   ScriptedProvider,
@@ -23,6 +24,8 @@ const spec = JSON.parse(await readFile(resolve("examples/lookup-member-balance.s
 
 function discoveryProvider(): ModelProvider {
   switch (process.env.EVIDENCE_DISCOVERY_PROVIDER ?? "scripted") {
+    case "groq":
+      return new GroqChatCompletionsProvider();
     case "codex":
       return new CodexCliProvider();
     case "openai":
@@ -30,7 +33,7 @@ function discoveryProvider(): ModelProvider {
     case "scripted":
       return new ScriptedProvider(lookupBalanceScript());
     default:
-      throw new Error("EVIDENCE_DISCOVERY_PROVIDER must be codex, openai, or scripted.");
+      throw new Error("EVIDENCE_DISCOVERY_PROVIDER must be groq, codex, openai, or scripted.");
   }
 }
 

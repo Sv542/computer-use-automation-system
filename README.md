@@ -27,7 +27,7 @@ flowchart LR
   Replay --> Evidence
 ```
 
-- A genuine observe-decide-act loop using either OpenAI Responses or the Codex CLI. A scripted provider exists only for offline tests and is labeled in provenance.
+- A genuine observe-decide-act loop using Groq Chat Completions, OpenAI Responses, or the Codex CLI. A scripted provider exists only for offline tests and is labeled in provenance.
 - A deliberately versioned, JSON-Schema-validated capability contract with typed inputs/outputs, parameterized actions, locator bundles, exception rules, checkpoint, policy, compatibility metadata, and provenance.
 - Deterministic replay with no model dependency or model call. Locator resolution requires one visible match and tries semantic strategies before structural fallbacks.
 - Distinct `success`, `business_outcome`, and `failure` results.
@@ -42,6 +42,7 @@ flowchart LR
 - Node.js 20 or newer
 - Google Chrome installed (override with `CHROME_CHANNEL` if needed)
 - For a genuine discovery run, either:
+  - `GROQ_API_KEY` and optional `GROQ_MODEL` (defaults to `openai/gpt-oss-20b`),
   - `OPENAI_API_KEY` and optional `OPENAI_MODEL`, or
   - an authenticated `codex` CLI and optional `CODEX_BIN`
 
@@ -58,7 +59,17 @@ No live service or key is needed for tests, replay, or the offline discovery fix
 
 ### 1. Genuine model-driven discovery
 
-With OpenAI Responses:
+With Groq Chat Completions:
+
+```bash
+GROQ_API_KEY=... npm run discover -- \
+  --with-demo \
+  --provider groq \
+  --inputs '{"memberId":"12345"}' \
+  --artifact artifacts/lookup-member-balance.v1.json
+```
+
+Or with OpenAI Responses:
 
 ```bash
 OPENAI_API_KEY=... npm run discover -- \
@@ -163,7 +174,7 @@ tests/            browser-level vertical-slice tests
 - Secrets belong in the environment and are never serialized into an artifact.
 - Input values are parameter references in the artifact, not literals.
 - Evidence events redact secrets, identifiers, amounts, and sensitive subtrees. Screenshots mask configured selectors.
-- The OpenAI Responses provider sends `store: false`; deployment retention and transport policy must still be reviewed for the institution.
+- The OpenAI Responses provider sends `store: false`. The Groq provider uses direct Chat Completions with strict structured output. Deployment retention and transport policy must still be reviewed for either endpoint.
 - The model necessarily sees the live observation during discovery. A production deployment must use an institution-approved model endpoint, transport, retention policy, and tenant isolation. Replay does not expose data to a model.
 - The demo evidence is safe to commit because every record is synthetic. Runtime evidence from a real institution should go to encrypted, access-controlled storage with retention limits and should never be committed.
 
