@@ -133,6 +133,40 @@ function assertDecision(value: unknown): ModelAction {
   };
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function addMissingNulls(record: Record<string, unknown>, keys: readonly string[]): Record<string, unknown> {
+  const normalized = { ...record };
+  for (const key of keys) {
+    if (!Object.hasOwn(normalized, key)) normalized[key] = null;
+  }
+  return normalized;
+}
+
+function normalizeDecisionEnvelope(value: unknown): unknown {
+  if (!isRecord(value)) return value;
+  const normalized = addMissingNulls(value, [
+    "description", "target", "value", "output", "parseAs", "risk", "summary", "reason",
+  ]);
+
+  if (isRecord(normalized.target)) {
+    const target = { ...normalized.target };
+    if (isRecord(target.frame)) target.frame = addMissingNulls(target.frame, ["name", "urlPattern"]);
+    if (isRecord(target.locator)) {
+      target.locator = addMissingNulls(target.locator, ["role", "name", "label", "text", "selector", "exact"]);
+    }
+    normalized.target = target;
+  }
+  if (isRecord(normalized.value)) normalized.value = addMissingNulls(normalized.value, ["value", "name"]);
+  return normalized;
+}
+
+function parseDecisionCandidate(text: string): ModelAction {
+  return assertDecision(normalizeDecisionEnvelope(JSON.parse(text)));
+}
+
 function buildPrompt(context: DecisionContext): string {
   return `You are the discovery planner for a policy-constrained computer-use system.
 Choose exactly one next UI action from the supplied observation. Return only the JSON object required by the response schema.
@@ -147,6 +181,8 @@ Rules:
 - Return finish only after all required outputs are extracted and the visible state satisfies the checkpoint.
 - Return escalate if the current state requires judgment or safe progress is impossible.
 - rationale is a brief decision summary, not private chain-of-thought.
+- Before returning, verify these top-level keys are all present: kind, description, target, value, output, parseAs, risk, rationale, summary, reason.
+- Never omit an inapplicable key. Set it to null; for example, a type action has output: null and parseAs: null.
 
 Goal: ${context.goal}
 Step: ${context.step} of ${context.maxSteps}
@@ -211,13 +247,33 @@ export class GroqChatCompletionsProvider implements ModelProvider {
       await new Promise((resolve) => setTimeout(resolve, retryDelay));
       response = await this.request("https://api.groq.com/openai/v1/chat/completions", requestOptions);
     }
-    if (!response.ok) throw new Error(`Groq Chat Completions failed (${response.status}): ${await response.text()}`);
+    if (!response.ok) {
+      const errorText = await response.text();
+      let errorBody: {
+        error?: { message?: string; code?: string; failed_generation?: string };
+      } | undefined;
+      try {
+        errorBody = JSON.parse(errorText) as typeof errorBody;
+      } catch {
+        // Keep the original response text for non-JSON upstream failures.
+      }
+      const failure = errorBody?.error;
+      if (response.status === 400 && failure?.code === "json_validate_failed" && failure.failed_generation) {
+        try {
+          return parseDecisionCandidate(failure.failed_generation);
+        } catch (error) {
+          const reason = error instanceof Error ? error.message : String(error);
+          throw new Error(`Groq returned an invalid structured candidate that could not be safely normalized: ${reason}`);
+        }
+      }
+      throw new Error(`Groq Chat Completions failed (${response.status}): ${failure?.message ?? errorText}`);
+    }
     const body = (await response.json()) as {
       choices?: Array<{ message?: { content?: string | null } }>;
     };
     const content = body.choices?.[0]?.message?.content;
     if (!content) throw new Error("Groq response contained no structured output.");
-    return assertDecision(JSON.parse(content));
+    return parseDecisionCandidate(content);
   }
 }
 

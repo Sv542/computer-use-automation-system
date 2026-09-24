@@ -96,3 +96,49 @@ test("Groq provider requires an API key before discovery starts", () => {
     /GROQ_API_KEY is required/,
   );
 });
+
+test("Groq provider safely normalizes omitted nullable envelope fields", async () => {
+  const failedGeneration = JSON.stringify({
+    kind: "type",
+    description: "Enter member ID",
+    target: {
+      frame: { name: "main", urlPattern: null },
+      locator: {
+        strategy: "role",
+        role: "textbox",
+        name: "Member ID",
+        label: null,
+        text: null,
+        selector: null,
+        exact: null,
+      },
+    },
+    value: { kind: "parameter", name: "memberId", value: null },
+    parseAs: "string",
+    risk: "safe",
+    rationale: "Enter the required member ID.",
+    summary: null,
+    reason: null,
+  });
+  const request: typeof fetch = async () => new Response(JSON.stringify({
+    error: {
+      message: "Generated JSON does not match the expected schema.",
+      type: "invalid_request_error",
+      code: "json_validate_failed",
+      failed_generation: failedGeneration,
+    },
+  }), { status: 400, headers: { "content-type": "application/json" } });
+
+  const provider = new GroqChatCompletionsProvider("openai/gpt-oss-20b", "test-key", request);
+  assert.deepEqual(await provider.decide(context), {
+    kind: "type",
+    description: "Enter member ID",
+    target: {
+      frame: { name: "main" },
+      locator: { strategy: "role", role: "textbox", name: "Member ID" },
+    },
+    value: { kind: "parameter", name: "memberId" },
+    risk: "safe",
+    rationale: "Enter the required member ID.",
+  });
+});
