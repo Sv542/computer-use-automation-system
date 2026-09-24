@@ -191,7 +191,9 @@ export class GroqChatCompletionsProvider implements ModelProvider {
         model: this.model,
         messages: [{ role: "user", content: buildPrompt(context) }],
         temperature: 0,
-        max_completion_tokens: 512,
+        reasoning_effort: "low",
+        include_reasoning: false,
+        max_completion_tokens: 2_048,
         response_format: {
           type: "json_schema",
           json_schema: {

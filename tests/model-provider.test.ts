@@ -42,11 +42,17 @@ test("Groq provider requests strict structured output and validates the response
     const body = JSON.parse(String(init?.body)) as {
       model: string;
       messages: Array<{ role: string; content: string }>;
+      reasoning_effort: string;
+      include_reasoning: boolean;
+      max_completion_tokens: number;
       response_format: { type: string; json_schema: { strict: boolean; schema: object } };
     };
     assert.equal(body.model, "openai/gpt-oss-20b");
     assert.equal(body.messages[0]?.role, "user");
     assert.match(body.messages[0]?.content ?? "", /Choose exactly one next UI action/);
+    assert.equal(body.reasoning_effort, "low");
+    assert.equal(body.include_reasoning, false);
+    assert.equal(body.max_completion_tokens, 2_048);
     assert.equal(body.response_format.type, "json_schema");
     assert.equal(body.response_format.json_schema.strict, true);
     assert.ok(body.response_format.json_schema.schema);
