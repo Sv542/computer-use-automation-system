@@ -23,6 +23,40 @@ function decisionSummary(decision: ModelAction): { kind: string; description: st
   return { kind: decision.kind, description: decision.description };
 }
 
+function sensitiveInputLiterals(spec: DiscoverySpec, inputs: Record<string, JsonValue>): Array<{ name: string; literal: string }> {
+  return Object.entries(spec.contract.inputs).flatMap(([name, definition]) => {
+    const value = inputs[name];
+    if (!definition.sensitive || value === undefined || value === null || typeof value === "object") return [];
+    const literal = String(value);
+    return literal.length === 0 ? [] : [{ name, literal }];
+  });
+}
+
+function parameterizeSensitiveText(text: string, literals: ReadonlyArray<{ name: string; literal: string }>): string {
+  return literals.reduce(
+    (result, { name, literal }) => result.split(literal).join(`{{${name}}}`),
+    text,
+  );
+}
+
+function containsLiteral(value: unknown, literal: string): boolean {
+  if (typeof value === "string") return value.includes(literal);
+  if (Array.isArray(value)) return value.some((item) => containsLiteral(item, literal));
+  if (value && typeof value === "object") return Object.values(value).some((item) => containsLiteral(item, literal));
+  return false;
+}
+
+function assertNoSensitiveInputLiterals(
+  artifact: CapabilityArtifact,
+  literals: ReadonlyArray<{ name: string; literal: string }>,
+): void {
+  for (const { name, literal } of literals) {
+    if (containsLiteral(artifact, literal)) {
+      throw new Error(`Discovered artifact contains the literal value of sensitive input ${name}.`);
+    }
+  }
+}
+
 async function toBrowserAction(decision: Exclude<ModelAction, { kind: "finish" | "escalate" }>, surface: WebSurface): Promise<BrowserAction> {
   const target = await surface.enrichTarget({
     ...(decision.target.frame ? { frame: decision.target.frame } : {}),
@@ -67,6 +101,7 @@ export class DiscoveryAgent {
     const recordedSteps: CapabilityStep[] = [];
     const completedActions: Array<{ kind: string; description: string }> = [];
     const outputs: Record<string, JsonValue> = {};
+    const sensitiveLiterals = sensitiveInputLiterals(options.spec, options.inputs);
     await options.evidence.event("run_started", {
       mode: "discovery",
       goalTemplate: options.spec.contract.goalTemplate,
@@ -147,6 +182,7 @@ export class DiscoveryAgent {
             model: this.model.model,
           },
         };
+        assertNoSensitiveInputLiterals(artifact, sensitiveLiterals);
         const screenshot = options.evidence.screenshotPath("discovery-success");
         await options.surface.screenshot(screenshot);
         await options.evidence.event("run_completed", {
@@ -157,6 +193,17 @@ export class DiscoveryAgent {
           screenshot: options.evidence.relativePath(screenshot),
         });
         return { artifact, outputs, evidenceDir: options.evidence.directory };
+      }
+
+      const safeDescription = parameterizeSensitiveText(decision.description, sensitiveLiterals);
+      if (decision.kind === "extract" && Object.hasOwn(outputs, decision.output)) {
+        await options.evidence.event("action_skipped", {
+          reason: "output_already_extracted",
+          output: decision.output,
+          description: safeDescription,
+        });
+        completedActions.push({ kind: decision.kind, description: safeDescription });
+        continue;
       }
 
       const action = await toBrowserAction(decision, options.surface);
@@ -181,13 +228,13 @@ export class DiscoveryAgent {
       const value = await options.surface.execute(action, options.inputs);
       const step: CapabilityStep = {
         id: `step-${String(recordedSteps.length + 1).padStart(2, "0")}`,
-        description: decision.description,
+        description: safeDescription,
         action,
         timeoutMs: 5_000,
         retry: { maxAttempts: 2, backoffMs: 250 },
       };
       recordedSteps.push(step);
-      completedActions.push(decisionSummary(decision));
+      completedActions.push({ kind: decision.kind, description: safeDescription });
       if (action.kind === "extract") outputs[action.output] = value ?? null;
       await options.evidence.event("action_completed", {
         stepId: step.id,

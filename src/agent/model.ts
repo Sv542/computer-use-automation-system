@@ -176,7 +176,9 @@ Rules:
 - Work only toward the stated goal. Never invent controls not present in the observation.
 - Prefer role/name or label locators. Use CSS only if no semantic target exists.
 - For values supplied by the caller, use {"kind":"parameter","name":"..."}; never copy the literal into the action.
+- Never include a caller-supplied literal in description or rationale; refer to its parameter name instead.
 - Extract only outputs declared by the contract, using the exact output key.
+- Never extract an output already listed in Extracted outputs. If every output is extracted and the checkpoint is visible, return finish.
 - Mark irreversible actions accurately. Search, typing into a lookup form, reading, and navigation are safe.
 - Return finish only after all required outputs are extracted and the visible state satisfies the checkpoint.
 - Return escalate if the current state requires judgment or safe progress is impossible.

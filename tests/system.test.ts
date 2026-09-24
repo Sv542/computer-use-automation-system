@@ -68,6 +68,34 @@ test("discovery emits a schema-valid, parameterized artifact", () => {
   assert.equal(JSON.stringify(artifact).includes("12345"), false);
 });
 
+test("discovery parameterizes sensitive descriptions and suppresses duplicate extraction", async () => {
+  const actions = lookupBalanceScript();
+  const firstAction = actions[0];
+  const extractAction = actions[2];
+  assert.ok(firstAction?.kind === "type");
+  assert.ok(extractAction?.kind === "extract");
+  actions[0] = { ...firstAction, description: "Enter member ID 12345" };
+  actions.splice(3, 0, structuredClone(extractAction));
+
+  const localEvidence = await EvidenceRecorder.create(evidenceRoot, "discovery", new Set(["12345"]));
+  const surface = await WebSurface.launch(spec.target);
+  try {
+    const result = await new DiscoveryAgent(
+      new ScriptedProvider(actions),
+      new HandoffCoordinator(),
+    ).run({ spec, inputs: { memberId: "12345" }, surface, evidence: localEvidence });
+
+    assert.equal(result.artifact.steps.length, 3);
+    assert.equal(result.artifact.steps[0]?.description, "Enter member ID {{memberId}}");
+    assert.equal(JSON.stringify(result.artifact).includes("12345"), false);
+    const events = await readFile(join(result.evidenceDir, "events.jsonl"), "utf8");
+    assert.match(events, /"type":"action_skipped"/);
+    assert.match(events, /"reason":"output_already_extracted"/);
+  } finally {
+    await surface.close();
+  }
+});
+
 test("deterministic replay returns the typed output without a model", async () => {
   const result = await replay("12345");
   assert.equal(result.status, "success");
