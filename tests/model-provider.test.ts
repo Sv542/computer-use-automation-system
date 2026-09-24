@@ -60,6 +60,11 @@ test("Groq provider requests strict structured output and validates the response
     if (requestCount === 1) {
       return new Response("rate limited", { status: 429, headers: { "retry-after": "0" } });
     }
+    if (requestCount === 2) {
+      return new Response(JSON.stringify({
+        error: { message: "TPM limit reached. Please try again in 0ms." },
+      }), { status: 429, headers: { "content-type": "application/json" } });
+    }
 
     return new Response(JSON.stringify({
       choices: [{
@@ -87,7 +92,7 @@ test("Groq provider requests strict structured output and validates the response
     summary: "Finished.",
     rationale: "The checkpoint is satisfied.",
   });
-  assert.equal(requestCount, 2);
+  assert.equal(requestCount, 3);
 });
 
 test("Groq provider requires an API key before discovery starts", () => {

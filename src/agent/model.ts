@@ -198,13 +198,32 @@ Current observation: ${JSON.stringify(context.observation)}`;
 
 type FetchImplementation = typeof fetch;
 
-function retryAfterMilliseconds(response: Response): number {
-  const value = response.headers.get("retry-after");
-  if (!value) return 1_000;
-  const seconds = Number(value);
-  if (Number.isFinite(seconds)) return Math.min(60_000, Math.max(0, seconds * 1_000));
-  const timestamp = Date.parse(value);
-  return Number.isFinite(timestamp) ? Math.min(60_000, Math.max(0, timestamp - Date.now())) : 1_000;
+function durationMilliseconds(value: string): number | undefined {
+  const match = value.trim().match(/^(\d+(?:\.\d+)?)\s*(ms|s|m)$/i);
+  if (!match) return undefined;
+  const amount = Number(match[1]);
+  const unit = match[2]?.toLowerCase();
+  return amount * (unit === "m" ? 60_000 : unit === "s" ? 1_000 : 1);
+}
+
+function retryAfterMilliseconds(response: Response, errorText: string, retry: number): number {
+  const retryAfter = response.headers.get("retry-after");
+  if (retryAfter) {
+    const seconds = Number(retryAfter);
+    if (Number.isFinite(seconds)) return Math.min(60_000, Math.max(0, seconds * 1_000));
+    const timestamp = Date.parse(retryAfter);
+    if (Number.isFinite(timestamp)) return Math.min(60_000, Math.max(0, timestamp - Date.now()));
+  }
+
+  const resetTokens = response.headers.get("x-ratelimit-reset-tokens");
+  const resetDelay = resetTokens ? durationMilliseconds(resetTokens) : undefined;
+  if (resetDelay !== undefined) return Math.min(60_000, Math.max(0, resetDelay));
+
+  const messageDelay = errorText.match(/try again in\s+(\d+(?:\.\d+)?\s*(?:ms|s|m))/i)?.[1];
+  const parsedMessageDelay = messageDelay ? durationMilliseconds(messageDelay) : undefined;
+  if (parsedMessageDelay !== undefined) return Math.min(60_000, Math.max(0, parsedMessageDelay + 100));
+
+  return Math.min(10_000, 500 * (2 ** retry));
 }
 
 export class GroqChatCompletionsProvider implements ModelProvider {
@@ -243,9 +262,9 @@ export class GroqChatCompletionsProvider implements ModelProvider {
       }),
     };
     let response = await this.request("https://api.groq.com/openai/v1/chat/completions", requestOptions);
-    if (response.status === 429) {
-      const retryDelay = retryAfterMilliseconds(response);
-      await response.text();
+    for (let retry = 0; response.status === 429 && retry < 4; retry += 1) {
+      const errorText = await response.text();
+      const retryDelay = retryAfterMilliseconds(response, errorText, retry);
       await new Promise((resolve) => setTimeout(resolve, retryDelay));
       response = await this.request("https://api.groq.com/openai/v1/chat/completions", requestOptions);
     }
