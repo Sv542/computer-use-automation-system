@@ -63,10 +63,18 @@ function assertDecision(value: unknown): ModelAction {
   }
   const envelope = value as DecisionEnvelope;
   if (envelope.kind === "finish") {
-    return { kind: "finish", summary: required(envelope.summary, "summary"), rationale: envelope.rationale };
+    return {
+      kind: "finish",
+      summary: envelope.summary ?? "Discovery planner reported completion.",
+      rationale: envelope.rationale,
+    };
   }
   if (envelope.kind === "escalate") {
-    return { kind: "escalate", reason: required(envelope.reason, "reason"), rationale: envelope.rationale };
+    return {
+      kind: "escalate",
+      reason: envelope.reason ?? "Discovery planner requested operator assistance.",
+      rationale: envelope.rationale,
+    };
   }
 
   const rawTarget = required(envelope.target, "target");

@@ -147,3 +147,48 @@ test("Groq provider safely normalizes omitted nullable envelope fields", async (
     rationale: "Enter the required member ID.",
   });
 });
+
+test("Groq provider supplies deterministic fallbacks for non-executable metadata", async () => {
+  const candidates = [
+    {
+      kind: "finish",
+      description: null,
+      target: null,
+      value: null,
+      output: null,
+      parseAs: null,
+      risk: null,
+      rationale: "The required work appears complete.",
+      summary: null,
+      reason: null,
+    },
+    {
+      kind: "escalate",
+      description: null,
+      target: null,
+      value: null,
+      output: null,
+      parseAs: null,
+      risk: null,
+      rationale: "Safe progress requires an operator.",
+      summary: null,
+      reason: null,
+    },
+  ];
+  let index = 0;
+  const request: typeof fetch = async () => new Response(JSON.stringify({
+    choices: [{ message: { content: JSON.stringify(candidates[index++]) } }],
+  }), { status: 200, headers: { "content-type": "application/json" } });
+  const provider = new GroqChatCompletionsProvider("openai/gpt-oss-20b", "test-key", request);
+
+  assert.deepEqual(await provider.decide(context), {
+    kind: "finish",
+    summary: "Discovery planner reported completion.",
+    rationale: "The required work appears complete.",
+  });
+  assert.deepEqual(await provider.decide(context), {
+    kind: "escalate",
+    reason: "Discovery planner requested operator assistance.",
+    rationale: "Safe progress requires an operator.",
+  });
+});
